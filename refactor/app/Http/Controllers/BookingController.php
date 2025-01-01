@@ -2,11 +2,11 @@
 
 namespace DTApi\Http\Controllers;
 
-use DTApi\Models\Job;
 use DTApi\Http\Requests;
 use DTApi\Models\Distance;
-use Illuminate\Http\Request;
+use DTApi\Models\Job;
 use DTApi\Repository\BookingRepository;
+use Illuminate\Http\Request;
 
 /**
  * Class BookingController
@@ -35,13 +35,9 @@ class BookingController extends Controller
      */
     public function index(Request $request)
     {
-        if($user_id = $request->get('user_id')) {
-
+        if ($user_id = $request->get('user_id')) {
             $response = $this->repository->getUsersJobs($user_id);
-
-        }
-        elseif($request->__authenticatedUser->user_type == env('ADMIN_ROLE_ID') || $request->__authenticatedUser->user_type == env('SUPERADMIN_ROLE_ID'))
-        {
+        } elseif ($request->__authenticatedUser->isAdmin() || $request->__authenticatedUser->isSuperAdmin()) { // if user is admin or super admin, the roles should manage on the model level functions the developer should not check the roles here
             $response = $this->repository->getAll($request);
         }
 
@@ -63,14 +59,11 @@ class BookingController extends Controller
      * @param Request $request
      * @return mixed
      */
-    public function store(Request $request)
+    public function store(BookingRequest $request) // i prefer to use FormRequest class to validate the request
     {
-        $data = $request->all();
-
-        $response = $this->repository->store($request->__authenticatedUser, $data);
-
+        $response = $this->repository->store($request->__authenticatedUser, $request->validated()); // the developer should use the validated method to get the validated data
+        // we should use proper exception handling here or in repository
         return response($response);
-
     }
 
     /**
@@ -78,11 +71,10 @@ class BookingController extends Controller
      * @param Request $request
      * @return mixed
      */
-    public function update($id, Request $request)
+    public function update($id, UpdateBookingRequest $request) // i prefer to use FormRequest class to validate the request
     {
-        $data = $request->all();
-        $cuser = $request->__authenticatedUser;
-        $response = $this->repository->updateJob($id, array_except($data, ['_token', 'submit']), $cuser);
+        $cuser = $request->__authenticatedUser; // i prefer auth() facade to get the authenticated user
+        $response = $this->repository->updateJob($id, $request->validated(), $cuser);
 
         return response($response);
     }
@@ -107,8 +99,7 @@ class BookingController extends Controller
      */
     public function getHistory(Request $request)
     {
-        if($user_id = $request->get('user_id')) {
-
+        if ($user_id = $request->get('user_id')) {
             $response = $this->repository->getUsersJobsHistory($user_id, $request);
             return response($response);
         }
@@ -196,62 +187,51 @@ class BookingController extends Controller
     {
         $data = $request->all();
 
-        if (isset($data['distance']) && $data['distance'] != "") {
-            $distance = $data['distance'];
-        } else {
-            $distance = "";
-        }
-        if (isset($data['time']) && $data['time'] != "") {
-            $time = $data['time'];
-        } else {
-            $time = "";
-        }
-        if (isset($data['jobid']) && $data['jobid'] != "") {
-            $jobid = $data['jobid'];
-        }
+        $distance = $this->getValue($data, 'distance');
+        $time = $this->getValue($data, 'time');
+        $jobid = $this->getValue($data, 'jobid');
+        $session = $this->getValue($data, 'session_time');
+        $flagged = $this->getFlagged($data);
+        $manually_handled = $this->getBooleanValue($data, 'manually_handled');
+        $by_admin = $this->getBooleanValue($data, 'by_admin');
+        $admincomment = $this->getValue($data, 'admincomment');
 
-        if (isset($data['session_time']) && $data['session_time'] != "") {
-            $session = $data['session_time'];
-        } else {
-            $session = "";
-        }
-
-        if ($data['flagged'] == 'true') {
-            if($data['admincomment'] == '') return "Please, add comment";
-            $flagged = 'yes';
-        } else {
-            $flagged = 'no';
-        }
-        
-        if ($data['manually_handled'] == 'true') {
-            $manually_handled = 'yes';
-        } else {
-            $manually_handled = 'no';
-        }
-
-        if ($data['by_admin'] == 'true') {
-            $by_admin = 'yes';
-        } else {
-            $by_admin = 'no';
-        }
-
-        if (isset($data['admincomment']) && $data['admincomment'] != "") {
-            $admincomment = $data['admincomment'];
-        } else {
-            $admincomment = "";
-        }
         if ($time || $distance) {
-
-            $affectedRows = Distance::where('job_id', '=', $jobid)->update(array('distance' => $distance, 'time' => $time));
+            Distance::where('job_id', '=', $jobid)->update(['distance' => $distance, 'time' => $time]);
         }
 
         if ($admincomment || $session || $flagged || $manually_handled || $by_admin) {
-
-            $affectedRows1 = Job::where('id', '=', $jobid)->update(array('admin_comments' => $admincomment, 'flagged' => $flagged, 'session_time' => $session, 'manually_handled' => $manually_handled, 'by_admin' => $by_admin));
-
+            Job::where('id', '=', $jobid)->update([
+                'admin_comments' => $admincomment,
+                'flagged' => $flagged,
+                'session_time' => $session,
+                'manually_handled' => $manually_handled,
+                'by_admin' => $by_admin
+            ]);
         }
 
         return response('Record updated!');
+    }
+
+    private function getValue($data, $key)
+    {
+        return isset($data[$key]) && $data[$key] != "" ? $data[$key] : "";
+    }
+
+    private function getFlagged($data)
+    {
+        if ($data['flagged'] == 'true') {
+            if ($data['admincomment'] == '') {
+                return response("Please, add comment");
+            }
+            return 'yes';
+        }
+        return 'no';
+    }
+
+    private function getBooleanValue($data, $key)
+    {
+        return $data[$key] == 'true' ? 'yes' : 'no';
     }
 
     public function reopen(Request $request)
